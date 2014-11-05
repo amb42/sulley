@@ -406,6 +406,52 @@ class session (pgraph.graph):
             done_with_fuzz_node = False
             crash_count         = 0
 
+            #<begin gitttt>
+            # Send a valid request for each node (including its predecessors) before the fuzzing starts.
+            # This helps to check if the block-based protocol description works, e.g. if wireshark shows
+            # no errors or if the target sends a valid response
+            try:
+                # establish a connection to the target.
+                sock = socket.socket(socket.AF_INET, self.proto)
+            except Exception, e:
+                error_handler(e, "failed creating socket", target)
+                continue
+
+            if self.bind:
+                try:
+                    sock.bind(self.bind)
+                except Exception, e:
+                    error_handler(e, "failed binding on socket", target, sock)
+                    continue
+
+            try:
+                sock.settimeout(self.timeout)
+                # Connect is needed only for TCP stream
+                if self.proto == socket.SOCK_STREAM:
+                    sock.connect((target.host, target.port))
+            except Exception, e:
+                error_handler(e, "failed connecting on socket", target, sock)
+                continue
+
+            # if SSL is requested, then enable it.
+            if self.ssl:
+                try:
+                    ssl  = socket.ssl(sock)
+                    sock = httplib.FakeSocket(sock, ssl)
+                except Exception, e:
+                    error_handler(e, "failed ssl setup", target, sock)
+                    continue
+                
+            try:
+                for e in path:
+                    node = self.nodes[e.dst]
+                    self.transmit(sock, node, e, target)
+            except Exception, e:
+                error_handler(e, "failed transmitting a node up the path", target, sock)
+                continue            
+            #<end gitttt>
+            
+            
             # loop through all possible mutations of the fuzz node.
             while not done_with_fuzz_node:
                 # if we need to pause, do so.
