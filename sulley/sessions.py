@@ -43,6 +43,9 @@ class target:
         self.procmon_options   = {}
         self.vmcontrol_options = {}
 
+        # Error handler
+        self.errhandler        = None
+
 
     def pedrpc_connect (self):
         '''
@@ -155,7 +158,7 @@ class session (pgraph.graph):
         @type  restart_sleep_time: Integer
         @kwarg restart_sleep_time: Optional, def=300) Time in seconds to sleep when target can't be restarted
         @type  web_port:	   Integer
-        @kwarg web_port:           (Optional, def=26000) Port for monitoring fuzzing campaign via a web browser	
+        @kwarg web_port:           (Optional, def=26000) Port for monitoring fuzzing campaign via a web browser
 	'''
 
         # run the parent classes initialization routine first.
@@ -172,6 +175,8 @@ class session (pgraph.graph):
         self.web_port            = web_port
         self.crash_threshold     = crash_threshold
         self.restart_sleep_time  = restart_sleep_time
+        self.listen              = None
+        self.ssock               = None
 
         # Initialize logger
         self.logger = logging.getLogger("Sulley_logger")
@@ -201,6 +206,10 @@ class session (pgraph.graph):
 
         if self.proto == "tcp":
             self.proto = socket.SOCK_STREAM
+
+        elif self.proto == "tcp-listen":
+            self.proto = socket.SOCK_STREAM
+            self.listen = True
 
         elif self.proto == "ssl":
             self.proto = socket.SOCK_STREAM
@@ -441,17 +450,17 @@ class session (pgraph.graph):
                 except Exception, e:
                     error_handler(e, "failed ssl setup", target, sock)
                     continue
-                
+
             try:
                 for e in path:
                     node = self.nodes[e.dst]
                     self.transmit(sock, node, e, target)
             except Exception, e:
                 error_handler(e, "failed transmitting a node up the path", target, sock)
-                continue            
+                continue
             #<end gitttt>
-            
-            
+
+
             # loop through all possible mutations of the fuzz node.
             while not done_with_fuzz_node:
                 # if we need to pause, do so.
@@ -482,6 +491,11 @@ class session (pgraph.graph):
 
                     self.logger.critical(msg)
                     self.restart_target(target)
+
+                    # Call custom error handler.
+                    # TODO: Find out which parameters are sensible
+                    if target.errhandler:
+                        target.errhandler(self.total_mutant_index)
 
                 # if we don't need to skip the current test case.
                 if self.total_mutant_index > self.skip:
@@ -522,11 +536,23 @@ class session (pgraph.graph):
                         try:
                             sock.settimeout(self.timeout)
                             # Connect is needed only for TCP stream
-                            if self.proto == socket.SOCK_STREAM:
+                            if self.proto == socket.SOCK_STREAM and not self.listen:
                                 sock.connect((target.host, target.port))
                         except Exception, e:
                             error_handler(e, "failed connecting on socket", target, sock)
                             continue
+
+                        if self.listen:
+                            try:
+                                if self.proto == socket.SOCK_STREAM:
+                                    if not self.ssock:
+                                        self.ssock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                                        self.ssock.bind((target.host, target.port))
+                                    self.ssock.listen(1)
+                                    sock, addr = self.ssock.accept()
+                            except Exception, e:
+                                error_handler(e, "failed listening on socket", target, self.ssock)
+                                continue
 
                         # if SSL is requested, then enable it.
                         if self.ssl:
